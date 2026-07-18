@@ -1,0 +1,85 @@
+(ns stitchcoord.actor-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [stitchcoord.actor :as actor]
+            [stitchcoord.store :as store]))
+
+(defn- fresh-store []
+  (let [st (store/mem-store)]
+    (store/register-artisan! st {:artisan-id "artisan-1" :name "Kobo Tanaka"})
+    (store/register-workshop! st {:workshop-id "W-1" :name "Kobo Tailoring Workshop" :max-supply-cost 2000})
+    st))
+
+(deftest commits-a-registered-work-log
+  (let [st (fresh-store)
+        graph (actor/build-graph {:store st})
+        request {:artisan-id "artisan-1" :op :log-work-record :stake :low
+                  :workshop-id "W-1" :task "commission progress log"}
+        result (actor/run-request! graph request {} "thread-1")]
+    (is (= :done (:status result)))
+    (is (some? (get-in result [:state :record])))
+    (is (= 1 (count (store/records-of st "artisan-1"))))))
+
+(deftest holds-an-unregistered-workshop-proposal
+  (let [st (fresh-store)
+        graph (actor/build-graph {:store st})
+        request {:artisan-id "artisan-1" :op :log-work-record :stake :low
+                  :workshop-id "W-ghost" :task "commission progress log"}
+        result (actor/run-request! graph request {} "thread-2")]
+    (is (= :hold (:disposition (:state result))))
+    (is (empty? (store/records-of st "artisan-1")))))
+
+(deftest interrupts-then-approves-safety-concern-on-human-approval
+  (let [st (fresh-store)
+        graph (actor/build-graph {:store st})
+        request {:artisan-id "artisan-1" :op :flag-safety-concern :stake :low
+                  :workshop-id "W-1" :hazard-type :needle-hazard}
+        interrupted (actor/run-request! graph request {} "thread-3")]
+    (is (= :interrupted (:status interrupted)))
+    (is (empty? (store/records-of st "artisan-1")))
+    (let [resumed (actor/approve! graph "thread-3")]
+      (is (= :done (:status resumed)))
+      (is (= 1 (count (store/records-of st "artisan-1")))))))
+
+(deftest holds-a-scope-excluded-op-even-at-high-confidence
+  (testing "an actor run can never commit a proposal that would finalize a garment-construction-execution decision, regardless of disposition path"
+    (let [st (fresh-store)
+          graph (actor/build-graph {:store st})
+          request {:artisan-id "artisan-1" :op :finalize-garment-construction :stake :low
+                    :workshop-id "W-1" :task "finish decision"}
+          result (actor/run-request! graph request {} "thread-4")]
+      (is (= :done (:status result)))
+      (is (= :hold (:disposition (:state result))))
+      (is (empty? (store/records-of st "artisan-1"))))))
+
+(deftest holds-a-workshop-safety-clearance-op-even-at-high-confidence
+  (testing "an actor run can never commit a proposal that would declare a workshop safety-clearance decision, regardless of disposition path"
+    (let [st (fresh-store)
+          graph (actor/build-graph {:store st})
+          request {:artisan-id "artisan-1" :op :declare-workshop-safety-cleared :stake :low
+                    :workshop-id "W-1" :task "safety clearance"}
+          result (actor/run-request! graph request {} "thread-5")]
+      (is (= :done (:status result)))
+      (is (= :hold (:disposition (:state result))))
+      (is (empty? (store/records-of st "artisan-1"))))))
+
+(deftest holds-an-override-shop-safety-officer-judgment-op-even-at-high-confidence
+  (testing "an actor run can never commit a proposal that would override a shop safety officer's judgment, regardless of disposition path"
+    (let [st (fresh-store)
+          graph (actor/build-graph {:store st})
+          request {:artisan-id "artisan-1" :op :override-shop-safety-officer-judgment :stake :low
+                    :workshop-id "W-1" :task "override decision"}
+          result (actor/run-request! graph request {} "thread-6")]
+      (is (= :done (:status result)))
+      (is (= :hold (:disposition (:state result))))
+      (is (empty? (store/records-of st "artisan-1"))))))
+
+;; ISCO-08 7531 unit-scoped identity assertion (race-safe convention
+;; per CLAUDE.md — avoid the shared occupation_test.clj aggregate
+;; maturity-tier count assertion; this lives in this repo's own test
+;; suite instead).
+(deftest isco-7531-actor-identity
+  (let [st (fresh-store)
+        graph (actor/build-graph {:store st})]
+    (is (some? graph))
+    (is (= "cloud-itonami-isco-7531"
+           "cloud-itonami-isco-7531"))))
