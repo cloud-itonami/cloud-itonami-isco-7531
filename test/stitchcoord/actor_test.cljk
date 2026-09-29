@@ -74,7 +74,7 @@
       (is (empty? (store/records-of st "artisan-1"))))))
 
 ;; ISCO-08 7531 unit-scoped identity assertion (race-safe convention
-;; per CLAUDE.md — avoid the shared occupation_test.clj aggregate
+;; per AGENTS.md — avoid the shared occupation_test.clj aggregate
 ;; maturity-tier count assertion; this lives in this repo's own test
 ;; suite instead).
 (deftest isco-7531-actor-identity
